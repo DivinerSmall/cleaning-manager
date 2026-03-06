@@ -1,86 +1,164 @@
+import json
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+
+st.set_page_config(page_title="Менеджер уборки", page_icon="🧹")
 
 st.title("Менеджер уборки")
 
-rooms = {
-    "Кухня": [
-        "Протереть стол",
-        "Помыть раковину",
-        "Протереть плиту"
-    ],
-    "Ванная": [
-        "Помыть зеркало",
-        "Помыть раковину",
-        "Разложить полотенца"
-    ],
-    "Спальня": [
-        "Заправить кровать",
-        "Убрать вещи",
-        "Протереть тумбочку"
-    ]
-}
+# -------- загрузка данных --------
 
-if "cleaning_state" not in st.session_state:
-    st.session_state.cleaning_state = "not_started"
+with open("rooms.json", "r", encoding="utf-8") as file:
+    rooms = json.load(file)
 
-selected_room = st.selectbox("Выбери помещение", list(rooms.keys()))
-tasks = rooms[selected_room]
+# -------- состояние --------
 
-st.subheader(f"Комната: {selected_room}")
+if "task_statuses" not in st.session_state:
+    st.session_state.task_statuses = {}
 
-state = st.session_state.cleaning_state
+if "mascot_step" not in st.session_state:
+    st.session_state.mascot_step = 0
 
-if state == "not_started":
-    st.write("Уборка ещё не начата.")
-    if st.button("Начать уборку"):
-        st.session_state.cleaning_state = "in_progress"
-        st.rerun()
+def get_task_key(room, task):
+    return f"{room}::{task}"
 
-elif state == "in_progress":
-    st.write("Маскот убирается вместе с тобой 🧹")
+def ensure_room_tasks(room):
+    for t in rooms[room]:
+        key = get_task_key(room, t["task"])
+        if key not in st.session_state.task_statuses:
+            st.session_state.task_statuses[key] = "not_started"
 
-    completed = 0
-    total = len(tasks)
+def status_label(s):
+    return {
+        "not_started": "⚪ не начато",
+        "active": "🔵 в процессе",
+        "paused": "🟡 пауза",
+        "done": "🟢 выполнено"
+    }[s]
 
-    for task in tasks:
-        checked = st.checkbox(task, key=f"{selected_room}_{task}")
-        if checked:
-            completed += 1
+# -------- выбор комнаты --------
 
-    st.write(f"Выполнено задач: {completed} из {total}")
+room = st.selectbox("Комната", list(rooms.keys()))
+ensure_room_tasks(room)
 
-    if completed == total:
-        st.session_state.cleaning_state = "finished"
-        st.rerun()
+room_tasks = rooms[room]
+task_names = [t["task"] for t in room_tasks]
 
-    if st.button("Прервать уборку"):
-        st.session_state.cleaning_state = "paused"
-        st.rerun()
+# -------- layout: две панели --------
 
-elif state == "paused":
-    st.warning("Уборка прервана. Ничего страшного, можно вернуться позже.")
+left, right = st.columns([1,1])
 
-    col1, col2 = st.columns(2)
+# =========================================================
+# ЛЕВАЯ ПАНЕЛЬ — список элементов
+# =========================================================
 
-    with col1:
-        if st.button("Продолжить уборку"):
-            st.session_state.cleaning_state = "in_progress"
+with left:
+
+    st.subheader("Элементы")
+
+    selected_task_name = st.radio(
+        "Выбери элемент",
+        task_names,
+        label_visibility="collapsed"
+    )
+
+    st.markdown("### Статусы")
+
+    for t in room_tasks:
+        key = get_task_key(room, t["task"])
+        st.write(f"{t['task']} — {status_label(st.session_state.task_statuses[key])}")
+
+# =========================================================
+# ПРАВАЯ ПАНЕЛЬ — процесс
+# =========================================================
+
+with right:
+
+    task_data = next(t for t in room_tasks if t["task"] == selected_task_name)
+
+    task_key = get_task_key(room, selected_task_name)
+    status = st.session_state.task_statuses[task_key]
+
+    st.subheader(f"Элемент: {selected_task_name}")
+
+    action = task_data["action"]
+    phrases = task_data["phrases"]
+
+    # -----------------------------------------------------
+
+    if status == "not_started":
+
+        st.write("Готов начать работу.")
+
+        if st.button("Старт"):
+            st.session_state.task_statuses[task_key] = "active"
+            st.session_state.mascot_step = 0
             st.rerun()
 
-    with col2:
-        if st.button("Начать заново"):
-            for task in tasks:
-                key = f"{selected_room}_{task}"
-                if key in st.session_state:
-                    del st.session_state[key]
+    # -----------------------------------------------------
 
-            st.session_state.cleaning_state = "not_started"
-            st.rerun()
+    elif status == "active":
 
-elif state == "finished":
-    st.success("Уборка завершена! Отличная работа ✨")
-    st.write("Маскот доволен и хвалит тебя за завершённую уборку.")
+        st_autorefresh(interval=2000, key="mascot")
 
-    if st.button("Убрать другую комнату"):
-        st.session_state.cleaning_state = "not_started"
-        st.rerun()
+        step = st.session_state.mascot_step % len(phrases)
+
+        st.info(f"Маскот {action} — {phrases[step]}")
+
+        st.session_state.mascot_step += 1
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("Пауза"):
+                st.session_state.task_statuses[task_key] = "paused"
+                st.session_state.mascot_step = 0
+                st.rerun()
+
+        with col2:
+            if st.button("Завершить"):
+                st.session_state.task_statuses[task_key] = "done"
+                st.session_state.mascot_step = 0
+                st.rerun()
+
+    # -----------------------------------------------------
+
+    elif status == "paused":
+
+        st.warning("Работа приостановлена")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("Продолжить"):
+                st.session_state.task_statuses[task_key] = "active"
+                st.session_state.mascot_step = 0
+                st.rerun()
+
+        with col2:
+            if st.button("Прекратить без завершения"):
+                st.session_state.task_statuses[task_key] = "not_started"
+                st.rerun()
+
+    # -----------------------------------------------------
+
+    elif status == "done":
+
+        st.success("Элемент завершён.")
+
+# =========================================================
+# ПРОГРЕСС КОМНАТЫ
+# =========================================================
+
+done = 0
+
+for t in room_tasks:
+    key = get_task_key(room, t["task"])
+    if st.session_state.task_statuses[key] == "done":
+        done += 1
+
+st.markdown("---")
+st.write(f"Выполнено: {done} из {len(room_tasks)}")
+
+if done == len(room_tasks):
+    st.success("Комната полностью убрана ✨")
