@@ -45,6 +45,53 @@ input {
   border-radius: 10px;
 }
 
+.select-input {
+  padding: 12px;
+  font-size: 16px;
+  border: 1px solid #111;
+  border-radius: 10px;
+}
+
+.create-room-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+  margin-top: 8px;
+}
+
+.room-card {
+  border: 1px solid #111;
+  border-radius: 12px;
+  padding: 16px;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.room-type-label {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.room-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .room-builder {
   display: flex;
   flex-direction: column;
@@ -254,4 +301,64 @@ input {
   text-align: left;
   padding: 8px 10px;
   border-radius: 8px;
+}
+
+.cleaning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.cleaning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.cleaning-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #111;
+  border-radius: 10px;
+  padding: 12px;
+  background: white;
+  text-align: left;
+}
+
+.cleaning-layout {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.cleaning-progress-item {
+  border: 1px solid #111;
+  border-radius: 10px;
+  padding: 12px;
+  background: white;
+  text-align: left;
+}
+
+.cleaning-progress-item.done {
+  background: #e9fbe9;
+}
+
+.cleaning-tile.is-target {
+  outline: 3px solid #3b82f6;
+  outline-offset: -3px;
+}
+
+.cleaning-tile.is-done {
+  opacity: 0.45;
+}
+
+.room-cleaning-status {
+  margin-top: 6px;
+  font-size: 14px;
 }
