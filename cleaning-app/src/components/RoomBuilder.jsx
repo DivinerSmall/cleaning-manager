@@ -1,21 +1,114 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ROOM_ITEMS, getDefaultRoomTitle } from "../data/roomTypes";
+import {
+  getAttachmentsForRoom,
+  getBaseElementsForRoom,
+  getDefaultRoomTitle,
+  getElementLabel,
+} from "../data/roomTypes";
+
+function createElementFromDef(def, x, y) {
+  return {
+    id: crypto.randomUUID(),
+    type: def.type,
+    definitionId: def.id,
+    x,
+    y,
+    width: def.width,
+    height: def.height,
+    minWidth: def.minWidth || def.width || 1,
+    maxWidth: def.maxWidth || def.width || 1,
+    behavior: def.behavior,
+    attachments: {},
+  };
+}
+
+function getElementCells(element) {
+  const cells = [];
+
+  for (let dy = 0; dy < (element.height || 1); dy += 1) {
+    for (let dx = 0; dx < (element.width || 1); dx += 1) {
+      cells.push({
+        x: element.x + dx,
+        y: element.y + dy,
+      });
+    }
+  }
+
+  return cells;
+}
+
+function getRoomTileMap(tiles) {
+  const map = new Set();
+  for (const tile of tiles) {
+    map.add(`${tile.x}-${tile.y}`);
+  }
+  return map;
+}
+
+function canPlaceElementAt(defOrSize, x, y, tiles, elements) {
+  const tileMap = getRoomTileMap(tiles);
+  const width = defOrSize.width || 1;
+  const height = defOrSize.height || 1;
+
+  for (let dy = 0; dy < height; dy += 1) {
+    for (let dx = 0; dx < width; dx += 1) {
+      const cellX = x + dx;
+      const cellY = y + dy;
+
+      if (!tileMap.has(`${cellX}-${cellY}`)) {
+        return false;
+      }
+
+      for (const element of elements) {
+        const occupied = getElementCells(element).some(
+          (cell) => cell.x === cellX && cell.y === cellY
+        );
+
+        if (occupied) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+function findElementAtCell(elements, x, y) {
+  return (
+    elements.find((element) =>
+      getElementCells(element).some((cell) => cell.x === x && cell.y === y)
+    ) || null
+  );
+}
+
+function getElementDisplayClass(type) {
+  if (type === "cabinet") return "placed-cabinet";
+  if (type === "table") return "placed-table";
+  if (type === "bed") return "placed-bed";
+  if (type === "sofa") return "placed-sofa";
+  return "";
+}
 
 export default function RoomBuilder({ room, onBack, onSave }) {
   const [tiles, setTiles] = useState(room.tiles);
+  const [elements, setElements] = useState(room.elements || []);
   const [selectedTile, setSelectedTile] = useState(null);
+  const [selectedElementId, setSelectedElementId] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [draggedAsset, setDraggedAsset] = useState(null);
+  const [dragHoverKey, setDragHoverKey] = useState(null);
 
   const holdTimerRef = useRef(null);
   const dragModeRef = useRef(null);
   const didDragRef = useRef(false);
   const dragAccumRef = useRef(0);
 
-  const availableItems = ROOM_ITEMS[room.type] || ROOM_ITEMS.other;
+  const baseElements = getBaseElementsForRoom(room.type);
+  const attachments = getAttachmentsForRoom(room.type);
 
-  function getTileKey(x, y) {
-    return `${x},${y}`;
-  }
+  const selectedElement =
+    elements.find((element) => element.id === selectedElementId) || null;
 
   function hasTile(x, y, customTiles = tiles) {
     return customTiles.some((tile) => tile.x === x && tile.y === y);
@@ -58,7 +151,7 @@ export default function RoomBuilder({ room, onBack, onSave }) {
 
     while (stack.length > 0) {
       const current = stack.pop();
-      const key = getTileKey(current.x, current.y);
+      const key = `${current.x}-${current.y}`;
 
       if (visited.has(key)) {
         continue;
@@ -69,7 +162,7 @@ export default function RoomBuilder({ room, onBack, onSave }) {
       const neighbors = getNeighbors(current, remainingTiles);
 
       for (const neighbor of neighbors) {
-        const neighborKey = getTileKey(neighbor.x, neighbor.y);
+        const neighborKey = `${neighbor.x}-${neighbor.y}`;
 
         if (!visited.has(neighborKey)) {
           stack.push(neighbor);
@@ -97,7 +190,7 @@ export default function RoomBuilder({ room, onBack, onSave }) {
         return currentTiles;
       }
 
-      return [...currentTiles, { x, y, isRoot: false, item: null }];
+      return [...currentTiles, { x, y, isRoot: false }];
     });
   }
 
@@ -146,7 +239,6 @@ export default function RoomBuilder({ room, onBack, onSave }) {
           x: tile.x + dx,
           y: tile.y + dy,
           isRoot: false,
-          item: null,
         }))
         .filter(
           (tile) =>
@@ -199,6 +291,16 @@ export default function RoomBuilder({ room, onBack, onSave }) {
           return currentTiles;
         }
 
+        const blockedByElement = elements.some((element) =>
+          getElementCells(element).some(
+            (cell) => cell.x === tile.x && cell.y === tile.y
+          )
+        );
+
+        if (blockedByElement) {
+          return currentTiles;
+        }
+
         testTiles = testTiles.filter(
           (testTile) => !(testTile.x === tile.x && testTile.y === tile.y)
         );
@@ -232,6 +334,15 @@ export default function RoomBuilder({ room, onBack, onSave }) {
   }
 
   function removeTile(x, y) {
+    const occupied = elements.some((element) =>
+      getElementCells(element).some((cell) => cell.x === x && cell.y === y)
+    );
+
+    if (occupied) {
+      alert("Сначала убери мебель с этого тайла");
+      return;
+    }
+
     setTiles((currentTiles) => {
       const tileToRemove = currentTiles.find(
         (tile) => tile.x === x && tile.y === y
@@ -254,15 +365,134 @@ export default function RoomBuilder({ room, onBack, onSave }) {
     }
   }
 
-  function setItemOnTile(x, y, itemName) {
-    setTiles((currentTiles) =>
-      currentTiles.map((tile) => {
-        if (tile.x === x && tile.y === y) {
-          return { ...tile, item: itemName };
-        }
+  function placeBaseElement(def, x, y) {
+    if (!canPlaceElementAt(def, x, y, tiles, elements)) {
+      alert("Элемент сюда не помещается");
+      return false;
+    }
 
-        return tile;
-      })
+    const nextElement = createElementFromDef(def, x, y);
+    setElements((current) => [...current, nextElement]);
+    return true;
+  }
+
+  function placeAttachmentOnElement(def, parentId) {
+    const parent = elements.find((element) => element.id === parentId);
+
+    if (!parent) {
+      return false;
+    }
+
+    if (!def.allowedParents.includes(parent.type)) {
+      alert("Этот модуль нельзя встроить в выбранный элемент");
+      return false;
+    }
+
+    if (parent.attachments?.[def.slot]) {
+      alert("Этот слот уже занят");
+      return false;
+    }
+
+    setElements((current) =>
+      current.map((element) =>
+        element.id === parent.id
+          ? {
+              ...element,
+              attachments: {
+                ...element.attachments,
+                [def.slot]: def.type,
+              },
+            }
+          : element
+      )
+    );
+
+    return true;
+  }
+
+  function placeAttachmentByCell(def, x, y) {
+    const parent = findElementAtCell(elements, x, y);
+
+    if (!parent) {
+      alert("Этот модуль нужно ставить на подходящую мебель");
+      return false;
+    }
+
+    return placeAttachmentOnElement(def, parent.id);
+  }
+
+  function removeSelectedElement() {
+    if (!selectedElement) return;
+
+    setElements((current) =>
+      current.filter((element) => element.id !== selectedElement.id)
+    );
+    setSelectedElementId(null);
+  }
+
+  function removeAttachment(slot) {
+    if (!selectedElement) return;
+
+    setElements((current) =>
+      current.map((element) =>
+        element.id === selectedElement.id
+          ? {
+              ...element,
+              attachments: {
+                ...element.attachments,
+                [slot]: null,
+              },
+            }
+          : element
+      )
+    );
+  }
+
+  function stretchSelectedElement() {
+    if (!selectedElement) return;
+    if (selectedElement.behavior !== "base-stretch") return;
+    if (selectedElement.width >= selectedElement.maxWidth) return;
+
+    const cloneElements = elements.filter(
+      (element) => element.id !== selectedElement.id
+    );
+
+    const canStretch = canPlaceElementAt(
+      {
+        width: selectedElement.width + 1,
+        height: selectedElement.height,
+      },
+      selectedElement.x,
+      selectedElement.y,
+      tiles,
+      cloneElements
+    );
+
+    if (!canStretch) {
+      alert("Нельзя растянуть элемент дальше");
+      return;
+    }
+
+    setElements((current) =>
+      current.map((element) =>
+        element.id === selectedElement.id
+          ? { ...element, width: element.width + 1 }
+          : element
+      )
+    );
+  }
+
+  function shrinkSelectedElement() {
+    if (!selectedElement) return;
+    if (selectedElement.behavior !== "base-stretch") return;
+    if (selectedElement.width <= selectedElement.minWidth) return;
+
+    setElements((current) =>
+      current.map((element) =>
+        element.id === selectedElement.id
+          ? { ...element, width: element.width - 1 }
+          : element
+      )
     );
   }
 
@@ -270,6 +500,9 @@ export default function RoomBuilder({ room, onBack, onSave }) {
     if (didDragRef.current) {
       return;
     }
+
+    closeContextMenu();
+    setSelectedElementId(null);
 
     const isSameTile =
       selectedTile &&
@@ -284,8 +517,21 @@ export default function RoomBuilder({ room, onBack, onSave }) {
     setSelectedTile({ x: tile.x, y: tile.y });
   }
 
+  function handleElementClick(elementId) {
+    closeContextMenu();
+    setSelectedTile(null);
+
+    if (selectedElementId === elementId) {
+      setSelectedElementId(null);
+      return;
+    }
+
+    setSelectedElementId(elementId);
+  }
+
   function openContextMenu(tile, event) {
     setSelectedTile({ x: tile.x, y: tile.y });
+    setSelectedElementId(null);
     setContextMenu({
       tile,
       x: event.clientX + 8,
@@ -294,6 +540,10 @@ export default function RoomBuilder({ room, onBack, onSave }) {
   }
 
   function startHold(event, tile) {
+    if (draggedAsset) {
+      return;
+    }
+
     event.preventDefault();
     clearHoldTimer();
 
@@ -327,7 +577,7 @@ export default function RoomBuilder({ room, onBack, onSave }) {
         return currentTiles;
       }
 
-      return [...currentTiles, { x: nextX, y: nextY, isRoot: false, item: null }];
+      return [...currentTiles, { x: nextX, y: nextY, isRoot: false }];
     });
   }
 
@@ -368,18 +618,87 @@ export default function RoomBuilder({ room, onBack, onSave }) {
     didDragRef.current = false;
   }
 
+  function handlePaletteDragStart(asset) {
+    setDraggedAsset(asset);
+    closeContextMenu();
+    clearHoldTimer();
+  }
+
+  function handlePaletteDragEnd() {
+    setDraggedAsset(null);
+    setDragHoverKey(null);
+  }
+
+  function handleTileDragOver(event, tile) {
+    if (!draggedAsset) return;
+
+    event.preventDefault();
+    setDragHoverKey(`${tile.x}-${tile.y}`);
+  }
+
+  function handleTileDragLeave() {
+    setDragHoverKey(null);
+  }
+
+  function handleTileDrop(event, tile) {
+    event.preventDefault();
+
+    if (!draggedAsset) return;
+
+    if (draggedAsset.kind === "base") {
+      placeBaseElement(draggedAsset.def, tile.x, tile.y);
+    }
+
+    if (draggedAsset.kind === "attachment") {
+      placeAttachmentByCell(draggedAsset.def, tile.x, tile.y);
+    }
+
+    setDraggedAsset(null);
+    setDragHoverKey(null);
+  }
+
+  function handleElementDragOver(event, element) {
+    if (!draggedAsset) return;
+    if (draggedAsset.kind !== "attachment") return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragHoverKey(`element:${element.id}`);
+  }
+
+  function handleElementDragLeave() {
+    setDragHoverKey(null);
+  }
+
+  function handleElementDrop(event, element) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!draggedAsset) return;
+    if (draggedAsset.kind !== "attachment") return;
+
+    placeAttachmentOnElement(draggedAsset.def, element.id);
+    setDraggedAsset(null);
+    setDragHoverKey(null);
+  }
+
   useEffect(() => {
     setTiles(room.tiles);
+    setElements(room.elements || []);
     setSelectedTile(null);
+    setSelectedElementId(null);
     setContextMenu(null);
-  }, [room.id, room.tiles]);
+    setDraggedAsset(null);
+    setDragHoverKey(null);
+  }, [room.id, room.tiles, room.elements]);
 
   useEffect(() => {
     onSave({
       ...room,
       tiles,
+      elements,
     });
-  }, [tiles]);
+  }, [tiles, elements]);
 
   useEffect(() => {
     function handlePointerMove(event) {
@@ -430,7 +749,7 @@ export default function RoomBuilder({ room, onBack, onSave }) {
       window.removeEventListener("mousemove", handlePointerMove);
       window.removeEventListener("mouseup", handlePointerUp);
     };
-  }, [selectedTile]);
+  }, [selectedTile, elements]);
 
   useEffect(() => {
     function handleWindowMouseDown(event) {
@@ -438,8 +757,17 @@ export default function RoomBuilder({ room, onBack, onSave }) {
       const insideTile = event.target.closest(".tile");
       const insideArrow = event.target.closest(".stretch-arrow");
       const insideGlobalControl = event.target.closest(".global-control");
+      const insidePalette = event.target.closest(".item-palette");
+      const insidePlacedElement = event.target.closest(".placed-element");
 
-      if (!insideMenu && !insideTile && !insideArrow && !insideGlobalControl) {
+      if (
+        !insideMenu &&
+        !insideTile &&
+        !insideArrow &&
+        !insideGlobalControl &&
+        !insidePalette &&
+        !insidePlacedElement
+      ) {
         closeContextMenu();
       }
     }
@@ -475,13 +803,78 @@ export default function RoomBuilder({ room, onBack, onSave }) {
       <button onClick={onBack}>Назад к комнатам</button>
 
       <div className="room-builder">
+        <div className="item-palette">
+          <p className="palette-title">Базовые элементы</p>
+
+          <div className="palette-list">
+            {baseElements.map((item) => (
+              <div
+                key={item.id}
+                className="palette-item"
+                draggable
+                onDragStart={() => handlePaletteDragStart({ kind: "base", def: item })}
+                onDragEnd={handlePaletteDragEnd}
+              >
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>
+
+          <p className="palette-title">Встраиваемые модули</p>
+
+          <div className="palette-list">
+            {attachments.map((item) => (
+              <div
+                key={item.id}
+                className="palette-item attachment-item"
+                draggable
+                onDragStart={() =>
+                  handlePaletteDragStart({ kind: "attachment", def: item })
+                }
+                onDragEnd={handlePaletteDragEnd}
+              >
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {selectedElement && (
+          <div className="selected-element-panel">
+            <strong>Выбран элемент: {getElementLabel(selectedElement.type)}</strong>
+
+            <div className="selected-element-actions">
+              {selectedElement.behavior === "base-stretch" && (
+                <>
+                  <button onClick={stretchSelectedElement}>Растянуть вправо</button>
+                  <button onClick={shrinkSelectedElement}>Сузить справа</button>
+                </>
+              )}
+
+              <button onClick={removeSelectedElement}>Удалить элемент</button>
+
+              {selectedElement.attachments?.top && (
+                <button onClick={() => removeAttachment("top")}>
+                  Убрать раковину
+                </button>
+              )}
+
+              {selectedElement.attachments?.inside && (
+                <button onClick={() => removeAttachment("inside")}>
+                  Убрать урну
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <p className="hint">
-          Клик по стрелке — добавить 1 тайл. Потянуть стрелку — протянуть дальше.
-          Долгое нажатие — меню тайла.
+          Перетащи базовый элемент на пол. Раковину и урну перетаскивай прямо на
+          тумбу. Стол и тумбу можно выделить и растягивать.
         </p>
 
         <div className="grid-area">
-          {!selectedTile && (
+          {!selectedTile && !selectedElement && (
             <>
               <button
                 className="global-control expand top"
@@ -562,7 +955,7 @@ export default function RoomBuilder({ room, onBack, onSave }) {
           )}
 
           <div
-            className="grid"
+            className="grid editor-grid"
             style={{
               gridTemplateColumns: `repeat(${bounds.columns}, 50px)`,
               gridTemplateRows: `repeat(${bounds.rows}, 50px)`,
@@ -577,68 +970,121 @@ export default function RoomBuilder({ room, onBack, onSave }) {
                 selectedTile.x === tile.x &&
                 selectedTile.y === tile.y;
 
+              const isDragHover = dragHoverKey === `${tile.x}-${tile.y}`;
+
               return (
-                <div
+                <button
                   key={`${tile.x}-${tile.y}`}
-                  className="tile-wrapper"
+                  className={`tile ${isSelected ? "selected" : ""} ${
+                    isDragHover ? "drag-hover" : ""
+                  }`}
                   style={{
                     gridColumn: col,
                     gridRow: row,
                   }}
+                  onClick={() => handleTileClick(tile)}
+                  onMouseDown={(event) => startHold(event, tile)}
+                  onMouseUp={endHold}
+                  onMouseLeave={endHold}
+                  onDragOver={(event) => handleTileDragOver(event, tile)}
+                  onDragLeave={handleTileDragLeave}
+                  onDrop={(event) => handleTileDrop(event, tile)}
+                />
+              );
+            })}
+
+            {elements.map((element) => {
+              const col = element.x - bounds.minX + 1;
+              const row = element.y - bounds.minY + 1;
+              const isSelected = selectedElementId === element.id;
+              const isAttachmentHover = dragHoverKey === `element:${element.id}`;
+
+              return (
+                <div
+                  key={element.id}
+                  className={`placed-element ${getElementDisplayClass(element.type)} ${
+                    isSelected ? "placed-element-selected" : ""
+                  } ${isAttachmentHover ? "placed-element-hover" : ""}`}
+                  style={{
+                    gridColumn: `${col} / span ${element.width || 1}`,
+                    gridRow: `${row} / span ${element.height || 1}`,
+                  }}
+                  onClick={() => handleElementClick(element.id)}
+                  onDragOver={(event) => handleElementDragOver(event, element)}
+                  onDragLeave={handleElementDragLeave}
+                  onDrop={(event) => handleElementDrop(event, element)}
                 >
-                  {isSelected && !hasTile(tile.x, tile.y - 1) && (
-                    <button
-                      className="stretch-arrow top"
-                      onClick={() => addFromSelected(0, -1)}
-                      onMouseDown={(event) => startStretch(tile, 0, -1, event)}
-                    >
-                      ↑
-                    </button>
+                  <div className="placed-element-label">
+                    {getElementLabel(element.type)}
+                  </div>
+
+                  {element.attachments?.top && (
+                    <div className="placed-element-attachment top">
+                      {getElementLabel(element.attachments.top)}
+                    </div>
                   )}
 
-                  {isSelected && !hasTile(tile.x + 1, tile.y) && (
-                    <button
-                      className="stretch-arrow right"
-                      onClick={() => addFromSelected(1, 0)}
-                      onMouseDown={(event) => startStretch(tile, 1, 0, event)}
-                    >
-                      →
-                    </button>
+                  {element.attachments?.inside && (
+                    <div className="placed-element-attachment inside">
+                      {getElementLabel(element.attachments.inside)}
+                    </div>
                   )}
-
-                  {isSelected && !hasTile(tile.x, tile.y + 1) && (
-                    <button
-                      className="stretch-arrow bottom"
-                      onClick={() => addFromSelected(0, 1)}
-                      onMouseDown={(event) => startStretch(tile, 0, 1, event)}
-                    >
-                      ↓
-                    </button>
-                  )}
-
-                  {isSelected && !hasTile(tile.x - 1, tile.y) && (
-                    <button
-                      className="stretch-arrow left"
-                      onClick={() => addFromSelected(-1, 0)}
-                      onMouseDown={(event) => startStretch(tile, -1, 0, event)}
-                    >
-                      ←
-                    </button>
-                  )}
-
-                  <button
-                    className={`tile ${isSelected ? "selected" : ""}`}
-                    onClick={() => handleTileClick(tile)}
-                    onMouseDown={(event) => startHold(event, tile)}
-                    onMouseUp={endHold}
-                    onMouseLeave={endHold}
-                  >
-                    {tile.item && <div className={`item ${tile.item}`}></div>}
-                  </button>
                 </div>
               );
             })}
           </div>
+
+          {selectedTile && !selectedElement && (
+            <>
+              {!hasTile(selectedTile.x, selectedTile.y - 1) && (
+                <button
+                  className="stretch-arrow top"
+                  onClick={() => addFromSelected(0, -1)}
+                  onMouseDown={(event) =>
+                    startStretch(selectedTile, 0, -1, event)
+                  }
+                >
+                  ↑
+                </button>
+              )}
+
+              {!hasTile(selectedTile.x + 1, selectedTile.y) && (
+                <button
+                  className="stretch-arrow right"
+                  onClick={() => addFromSelected(1, 0)}
+                  onMouseDown={(event) =>
+                    startStretch(selectedTile, 1, 0, event)
+                  }
+                >
+                  →
+                </button>
+              )}
+
+              {!hasTile(selectedTile.x, selectedTile.y + 1) && (
+                <button
+                  className="stretch-arrow bottom"
+                  onClick={() => addFromSelected(0, 1)}
+                  onMouseDown={(event) =>
+                    startStretch(selectedTile, 0, 1, event)
+                  }
+                >
+                  ↓
+                </button>
+              )}
+
+              {!hasTile(selectedTile.x - 1, selectedTile.y) && (
+                <button
+                  className="stretch-arrow left"
+                  onClick={() => addFromSelected(-1, 0)}
+                  onMouseDown={(event) =>
+                    startStretch(selectedTile, -1, 0, event)
+                  }
+                >
+                  ←
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         {contextMenu && (
@@ -658,31 +1104,6 @@ export default function RoomBuilder({ room, onBack, onSave }) {
               }}
             >
               Удалить тайл
-            </button>
-
-            {availableItems.map((item) => (
-              <button
-                key={item.value}
-                onClick={() => {
-                  setItemOnTile(
-                    contextMenu.tile.x,
-                    contextMenu.tile.y,
-                    item.value
-                  );
-                  closeContextMenu();
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-
-            <button
-              onClick={() => {
-                setItemOnTile(contextMenu.tile.x, contextMenu.tile.y, null);
-                closeContextMenu();
-              }}
-            >
-              Очистить элемент
             </button>
           </div>
         )}

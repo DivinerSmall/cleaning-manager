@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import RoomBuilder from "./components/RoomBuilder";
-import { createEmptyRoom } from "./data/roomTypes";
+import {
+  createEmptyRoom,
+  getTaskLabel,
+} from "./data/roomTypes";
 import AuthScreen from "./screens/AuthScreen";
 import CleaningScreen from "./screens/CleaningScreen";
 import CleaningSetupScreen from "./screens/CleaningSetupScreen";
@@ -8,12 +11,61 @@ import CreateRoomScreen from "./screens/CreateRoomScreen";
 import RoomsScreen from "./screens/RoomsScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 
+function normalizeRoom(room) {
+  return {
+    ...room,
+    cleaningStatus: room.cleaningStatus || "none",
+    tiles: room.tiles || [{ x: 0, y: 0, isRoot: true }],
+    elements: room.elements || [],
+  };
+}
+
+function getCleaningUnits(room) {
+  const units = [];
+
+  for (const element of room.elements || []) {
+    units.push({
+      id: `element:${element.id}`,
+      type: element.type,
+      label: getTaskLabel(element.type),
+      x: element.x,
+      y: element.y,
+      done: false,
+    });
+
+    if (element.attachments?.top) {
+      units.push({
+        id: `attachment:${element.id}:top`,
+        type: element.attachments.top,
+        label: getTaskLabel(element.attachments.top),
+        x: element.x,
+        y: element.y,
+        done: false,
+      });
+    }
+
+    if (element.attachments?.inside) {
+      units.push({
+        id: `attachment:${element.id}:inside`,
+        type: element.attachments.inside,
+        label: getTaskLabel(element.attachments.inside),
+        x: element.x,
+        y: element.y,
+        done: false,
+      });
+    }
+  }
+
+  return units;
+}
+
 export default function App() {
   const [screen, setScreen] = useState("welcome");
   const [userName, setUserName] = useState("");
   const [rooms, setRooms] = useState(() => {
     const savedRooms = localStorage.getItem("rooms");
-    return savedRooms ? JSON.parse(savedRooms) : [];
+    if (!savedRooms) return [];
+    return JSON.parse(savedRooms).map(normalizeRoom);
   });
   const [editingRoomId, setEditingRoomId] = useState(null);
   const [cleaningRoomId, setCleaningRoomId] = useState(null);
@@ -60,7 +112,7 @@ export default function App() {
   function handleSaveRoom(updatedRoom) {
     setRooms((currentRooms) =>
       currentRooms.map((room) =>
-        room.id === updatedRoom.id ? updatedRoom : room
+        room.id === updatedRoom.id ? normalizeRoom(updatedRoom) : room
       )
     );
   }
@@ -73,14 +125,7 @@ export default function App() {
   }
 
   function handleStartFullCleaning(room) {
-    const targets = room.tiles
-      .filter((tile) => tile.item)
-      .map((tile) => ({
-        x: tile.x,
-        y: tile.y,
-        item: tile.item,
-        done: false,
-      }));
+    const targets = getCleaningUnits(room);
 
     if (targets.length === 0) {
       alert("В комнате нет элементов для уборки");
@@ -97,15 +142,9 @@ export default function App() {
   }
 
   function handleStartPartialCleaning(room) {
-    const targets = room.tiles
-      .filter((tile) => tile.item)
-      .filter((tile) => selectedTargets.includes(`${tile.x}-${tile.y}`))
-      .map((tile) => ({
-        x: tile.x,
-        y: tile.y,
-        item: tile.item,
-        done: false,
-      }));
+    const targets = getCleaningUnits(room).filter((target) =>
+      selectedTargets.includes(target.id)
+    );
 
     if (targets.length === 0) {
       alert("Выбери хотя бы один элемент");
@@ -121,7 +160,7 @@ export default function App() {
     setScreen("cleaning");
   }
 
-  function handleToggleCleaningDone(x, y) {
+  function handleToggleCleaningDone(targetId) {
     setCleaningSession((currentSession) => {
       if (!currentSession) {
         return currentSession;
@@ -130,7 +169,7 @@ export default function App() {
       return {
         ...currentSession,
         targets: currentSession.targets.map((target) => {
-          if (target.x === x && target.y === y) {
+          if (target.id === targetId) {
             return { ...target, done: !target.done };
           }
 
@@ -156,7 +195,7 @@ export default function App() {
       return;
     }
 
-    const allRoomTargets = room.tiles.filter((tile) => tile.item);
+    const allRoomTargets = getCleaningUnits(room);
     const doneTargets = cleaningSession.targets.filter((target) => target.done);
 
     let nextStatus = "partial";

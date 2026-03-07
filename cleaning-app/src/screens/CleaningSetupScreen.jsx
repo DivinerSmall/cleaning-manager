@@ -1,9 +1,36 @@
-function getItemLabel(itemType) {
-  if (itemType === "sink") return "Раковина";
-  if (itemType === "trash") return "Урна";
-  if (itemType === "table") return "Стол";
-  if (itemType === "cabinet") return "Тумба";
-  return "Элемент";
+import { getElementLabel } from "../data/roomTypes";
+
+function getTargetsFromRoom(room) {
+  const targets = [];
+
+  for (const element of room.elements || []) {
+    targets.push({
+      id: `element:${element.id}`,
+      label: getElementLabel(element.type),
+      x: element.x,
+      y: element.y,
+    });
+
+    if (element.attachments?.top) {
+      targets.push({
+        id: `attachment:${element.id}:top`,
+        label: getElementLabel(element.attachments.top),
+        x: element.x,
+        y: element.y,
+      });
+    }
+
+    if (element.attachments?.inside) {
+      targets.push({
+        id: `attachment:${element.id}:inside`,
+        label: getElementLabel(element.attachments.inside),
+        x: element.x,
+        y: element.y,
+      });
+    }
+  }
+
+  return targets;
 }
 
 export default function CleaningSetupScreen({
@@ -14,23 +41,15 @@ export default function CleaningSetupScreen({
   onStartPartialCleaning,
   onBack,
 }) {
-  const roomItems = room.tiles
-    .filter((tile) => tile.item)
-    .map((tile) => ({
-      key: `${tile.x}-${tile.y}`,
-      x: tile.x,
-      y: tile.y,
-      item: tile.item,
-      label: getItemLabel(tile.item),
-    }));
+  const roomTargets = getTargetsFromRoom(room);
 
-  function toggleTarget(targetKey) {
+  function toggleTarget(targetId) {
     setSelectedTargets((current) => {
-      if (current.includes(targetKey)) {
-        return current.filter((key) => key !== targetKey);
+      if (current.includes(targetId)) {
+        return current.filter((id) => id !== targetId);
       }
 
-      return [...current, targetKey];
+      return [...current, targetId];
     });
   }
 
@@ -51,17 +70,17 @@ export default function CleaningSetupScreen({
       </div>
 
       <div className="cleaning-list">
-        {roomItems.length === 0 && <p>В комнате пока нет элементов для уборки</p>}
+        {roomTargets.length === 0 && <p>В комнате пока нет элементов для уборки</p>}
 
-        {roomItems.map((target) => {
-          const checked = selectedTargets.includes(target.key);
+        {roomTargets.map((target) => {
+          const checked = selectedTargets.includes(target.id);
 
           return (
-            <label key={target.key} className="cleaning-item">
+            <label key={target.id} className="cleaning-item">
               <input
                 type="checkbox"
                 checked={checked}
-                onChange={() => toggleTarget(target.key)}
+                onChange={() => toggleTarget(target.id)}
               />
               <span>
                 {target.label} — ({target.x}, {target.y})
